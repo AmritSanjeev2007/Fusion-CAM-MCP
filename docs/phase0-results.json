@@ -1,0 +1,195 @@
+{
+  "run_started": "2026-11-20 10:56:23",
+  "checks": {
+    "1_versions": {
+      "ok": true,
+      "python_version": "3.14.7 (tags/v3.14.7:823f032, Aug  5 2026, 10:51:32) [MSC v.1944 64 bit (AMD64)]",
+      "python_executable": "C:\\Users\\amrit\\AppData\\Local\\Autodesk\\webdeploy\\production\\39e8a3d5e919c70b05ef3ebfe9c6bfc8d9ee001e\\Fusion360.exe",
+      "fusion_version": "2706.1.17",
+      "install_dir": "C:\\Users\\amrit\\AppData\\Local\\Autodesk\\webdeploy\\production\\39e8a3d5e919c70b05ef3ebfe9c6bfc8d9ee001e",
+      "open_documents_before": [
+        "Untitled"
+      ],
+      "skipped_because_crashed_before": []
+    },
+    "4_units": {
+      "ok": true,
+      "volume_api_cm3": 1.0
+    },
+    "6_screenshot": {
+      "ok": true,
+      "path": "C:\\Fusion MCP\\docs\\phase0-screenshot.png",
+      "bytes": 40063
+    },
+    "5_step_export": {
+      "ok": true,
+      "path": "C:\\Fusion MCP\\test_output\\phase0_block.step",
+      "bytes": 8880
+    },
+    "5a_cam_doc": {
+      "ok": true,
+      "bodies": 1,
+      "size_mm": [
+        50.0,
+        40.0,
+        20.0
+      ],
+      "volume_mm3": 40000.0,
+      "design_type": "parametric"
+    },
+    "5b_cam_workspace": {
+      "ok": true,
+      "workspace_id": "CAMEnvironment",
+      "all_ids": null
+    },
+    "5c_cam_setup": {
+      "ok": true,
+      "setup": "Setup1"
+    },
+    "5d_cam_strategies": {
+      "ok": true,
+      "count": 55,
+      "strategies": [
+        "adaptive",
+        "adaptive2d",
+        "blend",
+        "bore",
+        "chamfer",
+        "chamfer2d",
+        "circular",
+        "contour2d",
+        "pocket2d",
+        "drill",
+        "engrave",
+        "face",
+        "feature_construction",
+        "flat",
+        "flow",
+        "flow2",
+        "folder",
+        "hole_recognition",
+        "inclined_walls",
+        "inspect_surface",
+        "profile2d",
+        "hole_machining",
+        "manual",
+        "model_area_clearance",
+        "rotary_contour",
+        "rotary_pocket",
+        "deburr",
+        "geodesic",
+        "multiaxis_finishing",
+        "multiaxis_roughing",
+        "advanced_swarf",
+        "three_plus_two",
+        "morph",
+        "morphed_spiral",
+        "multi_axis_contour",
+        "multi_axis_morph",
+        "contour3d",
+        "pocket_clearing",
+        "horizontal",
+        "parallel",
+        "pencil",
+        "radial",
+        "scallop",
+        "spiral",
+        "probe",
+        "probe_geometry",
+        "project",
+        "ramp",
+        "corner",
+        "rotary_finishing",
+        "slot",
+        "steep_and_shallow",
+        "swarf",
+        "thread",
+        "trace"
+      ]
+    },
+    "5e_cam_tool_from_json": {
+      "ok": true,
+      "source": "C:\\Users\\amrit\\AppData\\Local\\Autodesk\\webdeploy\\production\\39e8a3d5e919c70b05ef3ebfe9c6bfc8d9ee001e\\Applications\\CAM360\\Data\\libraries\\Samples\\Milling Tools (Metric).json",
+      "description": "6mm Flat Endmill",
+      "DC_mm": 6.0
+    },
+    "5f_cam_operation": {
+      "ok": true,
+      "strategy": "face",
+      "name": "Face1"
+    },
+    "5g_cam_generate": {
+      "ok": true,
+      "seconds": 1.8,
+      "has_toolpath": true,
+      "is_valid": true
+    },
+    "5h_cam_check": {
+      "ok": true,
+      "checkToolpath": true
+    },
+    "5i_cam_time": {
+      "ok": true,
+      "total_s": 43.050703,
+      "feed_dist_cm": 70.58650655267147,
+      "rapid_dist_cm": 2.5400000005960464,
+      "tool_changes": 0
+    },
+    "5j_cam_post_lookup": {
+      "ok": true,
+      "url": "system://fanuc.cps",
+      "description": "FANUC",
+      "vendor": "Fanuc"
+    },
+    "5k_cam_post": {
+      "ok": false,
+      "error": "postProcess returned True but no file in C:\\Fusion MCP\\test_output\\phase0_nc",
+      "traceback": "Traceback (most recent call last):\n  File \"C:/Fusion MCP/spikes/FusionMCP_Phase0/FusionMCP_Phase0.py\", line 107, in step\n    detail = fn() or {}\n             ~~^^\n  File \"C:/Fusion MCP/spikes/FusionMCP_Phase0/FusionMCP_Phase0.py\", line 310, in c_cam_post\n    raise RuntimeError(f\"postProcess returned {ok} but no file in {NC_DIR}\")\nRuntimeError: postProcess returned True but no file in C:\\Fusion MCP\\test_output\\phase0_nc\n"
+    },
+    "3_socket_thread": {
+      "ok": true,
+      "reply": {
+        "echo": {
+          "op": "ping"
+        },
+        "thread": "Thread-3 (process_request_thread)"
+      },
+      "server_thread_stopped": true
+    },
+    "2_custom_event": {
+      "ok": true,
+      "fired_from": "phase0-worker",
+      "handler_on_main_thread": true,
+      "latency_ms": 10.7,
+      "sketch_created": true
+    },
+    "7_lib_query": {
+      "ok": true,
+      "hits": 30,
+      "seconds": 8.3
+    },
+    "8_lib_scan": {
+      "ok": true,
+      "libraries": [
+        "systemlibraryroot://Samples/Cutting Tools (Inch)",
+        "systemlibraryroot://Samples/Cutting Tools (Metric)",
+        "systemlibraryroot://Samples/Holders (Inch)",
+        "systemlibraryroot://Samples/Holders (Metric)",
+        "systemlibraryroot://Samples/Holders - Standard Taper Blanks",
+        "systemlibraryroot://Samples/Hole Making Tools (Inch)",
+        "systemlibraryroot://Samples/Hole Making Tools (Metric)",
+        "systemlibraryroot://Samples/Milling Tools (Inch)",
+        "systemlibraryroot://Samples/Milling Tools (Metric)",
+        "systemlibraryroot://Samples/Probes",
+        "systemlibraryroot://Samples/Turning Tools (Inch)",
+        "systemlibraryroot://Samples/Turning Tools (Metric)",
+        "systemlibraryroot://Samples/Tutorial Tools (Inch)",
+        "systemlibraryroot://Samples/Tutorial Tools (Metric)"
+      ],
+      "first_library_tools": 3,
+      "seconds": 0.0
+    }
+  },
+  "last_write": "2026-11-20 10:56:40",
+  "run_finished": "2026-11-20 10:56:40"
+}

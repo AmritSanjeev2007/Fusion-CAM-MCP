@@ -1,0 +1,12 @@
+{
+    "autodeskProduct": "Fusion",
+    "type": "script",
+    "id": "3f6c2a1e-7b84-4d2a-9c61-5e0f8a4b2d17",
+    "author": "Amrit",
+    "description": {
+        "": "Phase 0 spike for the custom Fusion MCP: checks Python, custom events, sockets, units, screenshots and the CAM API, then writes docs/phase0-results.json."
+    },
+    "version": "0.1.0",
+    "supportedOS": "windows",
+    "editEnabled": true
+}

@@ -1,0 +1,27 @@
+[project]
+name = "fusion-cam-mcp"
+version = "0.1.0"
+description = "MCP server for CAM in Autodesk Fusion (STEP from Inventor -> setups, toolpaths, G-code) via a local add-in bridge"
+requires-python = ">=3.12"
+dependencies = [
+    "mcp[cli]>=1.0.0,<2",   # mcp 2.x removed mcp.server.fastmcp (the Inventor MCP lesson)
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+fusion-cam-mcp = "src.server:main"
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["fusion: needs a running Fusion with the FusionMCP add-in"]
+addopts = "-m 'not fusion'"

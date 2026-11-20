@@ -1,0 +1,13 @@
+{
+    "autodeskProduct": "Fusion",
+    "type": "addin",
+    "id": "9b1e4c7a-2f3d-4e8b-a6c5-1d0f7e2b8a94",
+    "author": "Amrit",
+    "description": {
+        "": "Local bridge for the fusion-cam MCP server (127.0.0.1:27190)."
+    },
+    "version": "0.1.0",
+    "runOnStartup": true,
+    "supportedOS": "windows",
+    "editEnabled": true
+}
