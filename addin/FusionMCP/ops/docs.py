@@ -101,8 +101,10 @@ def close_scratch(args: dict):
     """Close (without saving) documents import_step created that were never saved.
 
     name=None closes every such document; otherwise only documents with that name, and refuses
-    if a document with that name is not scratch or has been saved."""
+    if a document with that name is not scratch or has been saved. scratch_id (from import_step)
+    picks one document exactly: imported documents are often named "Untitled", like the user's."""
     name = args.get("name")
+    sid = args.get("scratch_id")
     guards.require_idle("close_scratch")
     app = _app()
     docs = [app.documents.item(i) for i in range(app.documents.count)]
@@ -110,7 +112,10 @@ def close_scratch(args: dict):
     for d in docs:
         if name is not None and d.name != name:
             continue
-        if not guards.is_scratch(d):
+        info = guards.scratch_info(d)
+        if sid is not None and (info or {}).get("id") != sid:
+            continue
+        if info is None:
             refused.append({"document": d.name, "reason": "not created by import_step (no FusionMCP scratch "
                                                          "attribute); the add-in never closes the user's documents"})
         elif not guards.never_saved(d):
@@ -118,6 +123,10 @@ def close_scratch(args: dict):
                                                          "yourself in Fusion if you want it closed"})
         else:
             targets.append(d)
+    if sid is not None and not targets:
+        if refused:
+            raise guards.OpError(f"Refusing to close scratch document {sid}: {refused[0]['reason']}.")
+        raise guards.OpError(f"No open scratch document with scratch_id '{sid}' (already closed?).")
     if name is not None and not targets:
         if refused:
             raise guards.OpError(f"Refusing to close '{name}': {refused[0]['reason']}.")

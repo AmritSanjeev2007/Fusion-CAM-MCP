@@ -220,7 +220,7 @@ def group_holes(holes: list[dict], nd: int = 3) -> list[dict]:
         g = groups.get(key)
         if g is None:
             g = groups[key] = {"diameter_mm": key[0], "depth_mm": key[1], "through": key[2],
-                               "axis": list(key[3]), "count": 0, "centres_mm": [], "entry_mm": [],
+                               "axis": list(key[3]), "through_basis": h.get("through_basis"), "count": 0, "centres_mm": [], "entry_mm": [],
                                "bodies": []}
         g["count"] += 1
         g["centres_mm"].append(_r(h["centre_mm"], nd))

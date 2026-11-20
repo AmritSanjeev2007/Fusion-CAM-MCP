@@ -17,7 +17,7 @@ All tool inputs and outputs are in **mm** (mm², mm³). The raw Fusion API insid
 | `import_step(path, expected_size_mm, expected_volume_mm3, tolerance_pct=0.1)` | Imports a STEP into a **new scratch design**. Returns bodies, bbox and volume, plus an optional check |
 | `inspect()` | Bodies, bbox, volume, top-face Z, horizontal planar faces by Z, holes (diameter, depth, through/blind, count) |
 | `screenshot(path, width, height, view)` | Viewport PNG (`iso`/`top`/`front`/`right`/`current`), saved to `test_output/` by default |
-| `close_scratch(name=None)` | Closes, without saving, only documents that `import_step` created and that were never saved |
+| `close_scratch(name=None, scratch_id=None)` | Closes, without saving, only documents that `import_step` created and that were never saved. Prefer `scratch_id`, because imported documents are named "Untitled" like a new user document |
 
 `import_step` and `close_scratch` refuse while a Fusion command dialog is open. A call that times out may still be running in Fusion, so call `status`/`inspect` before retrying.
 
@@ -38,7 +38,9 @@ All tool inputs and outputs are in **mm** (mm², mm³). The raw Fusion API insid
 1. In Inventor, export the test plate (80×50×10 mm, R5 corners, Ø16 through hole, 2× M6) to `test_output\MCP_Test_Plate.step`.
 2. Run `import_step("C:\\Fusion MCP\\test_output\\MCP_Test_Plate.step", expected_size_mm=[80, 50, 10], expected_volume_mm3=37395)`. Expect `check.ok: true`, i.e. within 0.1 %.
 3. Run `inspect()`. Expect top face Z = 10, one Ø16 through hole and two identical through holes at the M6 tap-drill diameter.
-4. Run `screenshot(view="iso")`, then `close_scratch()`.
+4. Run `screenshot(view="iso")`, then `close_scratch(scratch_id=...)`.
+
+Results from 2026-11-20 are in [docs/phase2-results.md](docs/phase2-results.md): 80.000×50.000×10.000 mm, 37395.009 mm³, holes 1× Ø16 and 2× Ø4.917, all through.
 
 Tests:
 ```powershell

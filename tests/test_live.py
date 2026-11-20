@@ -74,7 +74,23 @@ def plate(client):
     r = client.call("import_step", {"path": PLATE_STEP, "expected_size_mm": [80, 50, 10],
                                     "expected_volume_mm3": 37395}, timeout=120)
     yield r
-    client.call("close_scratch", {"name": r["document"]})
+    try:
+        client.call("close_scratch", {"scratch_id": r["scratch_id"]})
+    except BridgeError:
+        pass                                # already closed by the last test
+
+
+def test_close_scratch_refuses_user_documents(client):
+    """Runs before the plate is imported, so a name match can only hit the user's documents."""
+    st = client.call("status", timeout=10)
+    user = [d["name"] for d in st["documents"] if not d["scratch"]]
+    if not user:
+        pytest.skip("no user document open to test the refusal on")
+    with pytest.raises(BridgeError) as e:
+        client.call("close_scratch", {"name": user[0]})
+    assert "Refusing" in str(e.value)
+    with pytest.raises(BridgeError):
+        client.call("close_scratch", {"scratch_id": "no-such-id"})
 
 
 def test_import_step_test_plate(plate):
@@ -97,11 +113,10 @@ def test_screenshot(client, plate):
     assert os.path.exists(r["path"]) and r["bytes"] > 1000
 
 
-def test_close_scratch_refuses_user_documents(client, plate):
-    st = client.call("status", timeout=10)
-    for d in st["documents"]:
-        if not d["scratch"]:
-            with pytest.raises(BridgeError) as e:
-                client.call("close_scratch", {"name": d["name"]})
-            assert "Refusing" in str(e.value)
-            break
+def test_close_by_scratch_id_leaves_namesakes(client, plate):
+    """Imported documents are often named 'Untitled' like the user's; scratch_id picks only ours."""
+    before = [d for d in client.call("status", timeout=10)["documents"] if not d["scratch"]]
+    r = client.call("close_scratch", {"scratch_id": plate["scratch_id"]})
+    assert r["closed"] == [plate["document"]]
+    after = [d for d in client.call("status", timeout=10)["documents"] if not d["scratch"]]
+    assert [d["name"] for d in after] == [d["name"] for d in before]

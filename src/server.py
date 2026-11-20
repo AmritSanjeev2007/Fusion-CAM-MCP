@@ -149,14 +149,21 @@ def screenshot(path: str | None = None, width: int = 1600, height: int = 1000, v
 
 
 @mcp.tool()
-def close_scratch(name: str | None = None, timeout_s: float = 60) -> str:
+def close_scratch(name: str | None = None, scratch_id: str | None = None, timeout_s: float = 60) -> str:
     """Close, WITHOUT saving, documents that import_step created and that were never saved.
 
     name=None closes all of them; with a name, only that document, and it refuses (with the reason)
-    if the document was not created by import_step or has been saved. Never closes the user's
-    documents. A timed-out call may still finish: call status before retrying.
+    if the document was not created by import_step or has been saved. scratch_id (returned by
+    import_step) selects exactly one document; prefer it, because imported documents are often named
+    "Untitled" like the user's own. Never closes the user's documents. A timed-out call may still
+    finish: call status before retrying.
     """
-    return _json("close_scratch", {"name": name} if name else {}, timeout_s)
+    args = {}
+    if name:
+        args["name"] = name
+    if scratch_id:
+        args["scratch_id"] = scratch_id
+    return _json("close_scratch", args, timeout_s)
 
 
 def main():
