@@ -1,7 +1,8 @@
 """Live checks against a running Fusion with the FusionMCP add-in started.
 
 Run: .venv\\Scripts\\python.exe -m pytest -m fusion -v
-Read-only apart from execute_python variables; never opens, edits or closes documents.
+The Phase 1 checks are read-only apart from execute_python variables. The Phase 2 checks import
+test_output/MCP_Test_Plate.step into one scratch document and close it again; they never touch other documents.
 """
 
 import os
@@ -57,3 +58,50 @@ def test_reload_clears_namespace(client):
     assert "exec" in r["ops"]
     with pytest.raises(BridgeError):
         client.call("exec", {"code": "keep_me"})
+
+
+# ---- Phase 2: STEP import (creates one scratch document and closes it again)
+PLATE_STEP = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                          "test_output", "MCP_Test_Plate.step")
+
+
+@pytest.fixture(scope="module")
+def plate(client):
+    if not os.path.exists(PLATE_STEP):
+        pytest.skip(f"export the Inventor test plate to {PLATE_STEP} first")
+    if not client.call("status", timeout=10)["idle"]:
+        pytest.skip("Fusion is not idle (a command dialog is open)")
+    r = client.call("import_step", {"path": PLATE_STEP, "expected_size_mm": [80, 50, 10],
+                                    "expected_volume_mm3": 37395}, timeout=120)
+    yield r
+    client.call("close_scratch", {"name": r["document"]})
+
+
+def test_import_step_test_plate(plate):
+    assert plate["body_count"] == 1
+    assert plate["check"]["ok"], plate["check"]
+
+
+def test_inspect_test_plate(client, plate):
+    r = client.call("inspect")
+    assert r["document"] == plate["document"] and r["scratch"]
+    assert r["top_face_z_mm"] == pytest.approx(10.0, abs=1e-3)
+    assert r["hole_count"] == 3
+    big = r["holes"][0]
+    assert big["diameter_mm"] == pytest.approx(16.0, abs=1e-3) and big["count"] == 1 and big["through"]
+    assert r["holes"][1]["count"] == 2
+
+
+def test_screenshot(client, plate):
+    r = client.call("screenshot", {"view": "iso", "width": 800, "height": 500})
+    assert os.path.exists(r["path"]) and r["bytes"] > 1000
+
+
+def test_close_scratch_refuses_user_documents(client, plate):
+    st = client.call("status", timeout=10)
+    for d in st["documents"]:
+        if not d["scratch"]:
+            with pytest.raises(BridgeError) as e:
+                client.call("close_scratch", {"name": d["name"]})
+            assert "Refusing" in str(e.value)
+            break

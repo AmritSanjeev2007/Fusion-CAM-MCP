@@ -11,7 +11,7 @@ import adsk.core
 import adsk.fusion
 import adsk.cam
 
-from . import state
+from . import guards, state
 
 MAX_OUTPUT = 20000
 
@@ -26,7 +26,7 @@ def ping(args: dict):
 
 def _doc_info(doc) -> dict:
     info = {"name": doc.name, "saved": doc.isSaved, "modified": doc.isModified,
-            "scratch": any(d == doc for d in state.scratch_docs)}
+            "scratch": guards.is_scratch(doc)}
     try:
         info["products"] = [doc.products.item(i).productType for i in range(doc.products.count)]
     except Exception:

@@ -4,7 +4,7 @@ Add new ops by registering them in `_build()`. `reload` (handled in FusionMCP.py
 every ops module except `state` and `breadcrumb`, then calls `_build()` again.
 """
 
-from . import breadcrumb, core
+from . import breadcrumb, core, docs, geometry
 
 OPS: dict = {}
 
@@ -15,6 +15,10 @@ def _build():
         "ping": core.ping,
         "status": core.status,
         "exec": core.exec_code,
+        "import_step": docs.import_step,
+        "inspect": geometry.inspect,
+        "screenshot": docs.screenshot,
+        "close_scratch": docs.close_scratch,
     })
 
 
@@ -30,6 +34,10 @@ def handle(req: dict):
     summary = ""
     if op == "exec":
         summary = (args.get("code", "").strip().splitlines() or [""])[0][:80]
+    elif op == "import_step":
+        summary = str(args.get("path", ""))[-120:]
+    elif op == "close_scratch":
+        summary = str(args.get("name") or "all")[:80]
     breadcrumb.begin(op, req.get("id"), summary)
     ok = False
     try:

@@ -1,7 +1,8 @@
 """fusion-cam MCP server: CAM in Autodesk Fusion via the FusionMCP add-in.
 
-Phase 1 tools: status, execute_python, reload_api. CAM and STEP-import tools arrive in
-Phases 2-3 (see docs/FUSION_MCP_PLAN.md).
+Phase 1 tools: status, execute_python, reload_api.
+Phase 2 tools (STEP import from Inventor): import_step, inspect, screenshot, close_scratch.
+CAM tools arrive in Phase 3 (see FUSION_MCP_PLAN.md). Every tool takes and returns mm.
 """
 
 import json
@@ -15,6 +16,9 @@ mcp = FastMCP(
     instructions=(
         "CAM in Autodesk Fusion through the FusionMCP add-in. Models come from Inventor as STEP files; "
         "Fusion is only used for machining (setups, toolpaths, posting). Call status first. "
+        "Workflow: import_step (STEP exported from Inventor) -> inspect -> screenshot -> CAM -> close_scratch. "
+        "All tool inputs and outputs are in mm (mm^2, mm^3). A call that times out may still finish inside "
+        "Fusion: call status and inspect before retrying it. "
         "execute_python runs on Fusion's main thread in a persistent namespace with app, ui, adsk, doc, "
         "design, root, cam, mm(), deg() bound; the raw API uses cm and radians. A bad adsk.cam call can crash "
         "Fusion outright: if status reports last_crash, do not repeat that call."
@@ -80,6 +84,79 @@ def reload_api() -> str:
         return json.dumps(_client.call("reload", timeout=30))
     except BridgeError as e:
         return _fmt_error(e)
+
+
+def _json(op: str, args: dict, timeout: float) -> str:
+    try:
+        return json.dumps(_client.call(op, args, timeout=timeout), indent=1)
+    except BridgeError as e:
+        out = _fmt_error(e)
+        if e.kind == "timeout":
+            out += "\nThe call may still be running in Fusion: call status and inspect before retrying."
+        return out
+
+
+@mcp.tool()
+def import_step(path: str, expected_size_mm: list[float] | None = None,
+                expected_volume_mm3: float | None = None, tolerance_pct: float = 0.1,
+                timeout_s: float = 120) -> str:
+    """Import a STEP file (e.g. exported from Inventor) into a NEW Fusion design marked as scratch.
+
+    Units are millimetres. path: absolute path to a .step/.stp file. Returns the document name,
+    body count, per-body and overall bounding box (mm) and volume (mm^3). Optional check:
+    expected_size_mm=[L, W, H] and/or expected_volume_mm3, compared within tolerance_pct (default
+    0.1 %). Sizes are compared sorted (axis-agnostic) and a warning says if the axes differ (e.g. a
+    Y-up vs Z-up export). Refuses while Fusion is mid-command. Only documents created here can be
+    closed later with close_scratch. If the call times out it may still finish inside Fusion: call
+    status and inspect before retrying, or you get a second document.
+    """
+    args = {"path": path, "tolerance_pct": tolerance_pct}
+    if expected_size_mm is not None:
+        args["expected_size_mm"] = expected_size_mm
+    if expected_volume_mm3 is not None:
+        args["expected_volume_mm3"] = expected_volume_mm3
+    return _json("import_step", args, timeout_s)
+
+
+@mcp.tool()
+def inspect(timeout_s: float = 60) -> str:
+    """Describe the active design for CAM planning. Read-only. All values in mm (areas mm^2,
+    volumes mm^3), world coordinates.
+
+    Returns bodies (including occurrence proxies) with bounding boxes and volumes, the overall
+    bbox/volume, top_face_z_mm (highest upward-facing planar face), horizontal planar faces grouped
+    by Z with area and facing, and cylindrical holes (concave cylinders, split faces merged) grouped
+    by diameter/depth/axis with a count, centres, entry points and through/blind. Hole depth is the
+    cylindrical wall only (no drill point). If a call times out it may still be running in Fusion:
+    call status, then inspect again, before retrying anything.
+    """
+    return _json("inspect", {}, timeout_s)
+
+
+@mcp.tool()
+def screenshot(path: str | None = None, width: int = 1600, height: int = 1000, view: str = "iso",
+               timeout_s: float = 60) -> str:
+    """Save the active viewport as a PNG and return its path (sizes in px).
+
+    view: iso | top | front | right | current ('current' keeps the user's camera; the others
+    reorient and fit the view). Default path: <repo>/test_output/screenshot_<time>_<view>.png.
+    Read the PNG to look at it. A timed-out call may still finish: call status before retrying.
+    """
+    args = {"width": width, "height": height, "view": view}
+    if path:
+        args["path"] = path
+    return _json("screenshot", args, timeout_s)
+
+
+@mcp.tool()
+def close_scratch(name: str | None = None, timeout_s: float = 60) -> str:
+    """Close, WITHOUT saving, documents that import_step created and that were never saved.
+
+    name=None closes all of them; with a name, only that document, and it refuses (with the reason)
+    if the document was not created by import_step or has been saved. Never closes the user's
+    documents. A timed-out call may still finish: call status before retrying.
+    """
+    return _json("close_scratch", {"name": name} if name else {}, timeout_s)
 
 
 def main():
