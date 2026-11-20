@@ -8,8 +8,30 @@
 - **MCP tool `gcode_check(paths, stock_wcs_mm=None, setup=None, limits_wcs_mm, expected_tools, clearance_mm, resolution_mm)`.** If no stock is given, it reads the stock box (`stock_in_wcs_mm`) and the expected tool numbers from the Fusion setup through `cam_status`. `ok=false` means don't run the program.
 - **CLI:** `python external/gcode_check.py --stock -41,-26,-11,41,26,0 --tools 1,2,3,4 a.nc b.nc …` exits with 0 when the program passes and 1 when it has errors.
 
-## CAMotics
-**Not installed on this PC**: not on PATH, and not in `Program Files` or `Program Files (x86)`. I didn't install it, because downloading software needs your approval. `gcode_check` reports `camotics: {installed: false}` and uses the built-in height-map simulation. That simulation detects rapids through material and reports removed volume, which is what the plan wanted CAMotics for. If CAMotics is installed later, its path is reported, but it isn't run automatically because that path couldn't be verified here.
+## CAMotics (installed later the same day, run 2026-11-20 13:40)
+**CAMotics 1.2.0** is at `C:\Program Files (x86)\CAMotics`. The version comes from its `CHANGELOG.md`, because `camsim --version` prints `0.0`. `gcode_check` now also runs its command-line simulator `camsim` on the same programs and reports both removed volumes side by side.
+
+How it's wired in (`external/gcode_check.py: run_camotics`):
+- A `.camotics` project is written with the stock box (`workpiece.bounds`, WCS mm), a tool table built from the post comments (`cylindrical`, or `ballnose` for ball mills), `resolution-mode: manual`, a 0.25 mm resolution, and the files in order.
+- camsim writes the cut workpiece as an STL. The mesh surface sits slightly outside the nominal box (the uncut 82×52×11 box measures 48 397.8 mm³, not 46 904). So removal is measured as **empty-program volume − job volume**. Both camsim runs go in parallel and take about 9–11 s in total, mostly writing the STL.
+- What camsim 1.2.0 can't do, found on this job:
+  - **`Not implemented: G83 (Peck Drilling)`**: it skips the cycle. The temporary copy rewrites G83/G73 to G81 and drops Q, which keeps the line numbers. The material removed is the same.
+  - `Tool Length Offset not supported` on every G43: harmless, counted and ignored.
+  - **It reports no collisions**: `RAPID_INTO_STOCK` comes only from the built-in simulation.
+  - It models drill points and bull-nose corners as cylinders.
+- Its warnings are mapped back to the original file and line. If the two simulations differ by more than 5 %, `gcode_check` adds a `SIM_DISAGREE` warning.
+- It's found through `CAMOTICS_HOME`, PATH, or `Program Files (x86)\CAMotics`. If CAMotics isn't installed, the built-in simulation runs alone and the report says so. `camotics=false` (or the CLI's `--no-camotics`) skips it.
+
+| Test plate job (4 files) | Built-in height map (0.5 mm) | CAMotics 1.2.0 (0.25 mm) |
+|---|---|---|
+| Removed volume | 9524.0 mm³ | 9767.3 mm³ (+2.55 %) |
+| Remaining against CAD 37 395 mm³ | 37 380.0 (−0.04 %) | 37 136.7 (−0.69 %) |
+| Problems | none (3 info `BELOW_STOCK`) | no warnings (G83 run as G81) |
+| Time | 1.6 s | 9.2 s |
+
+Running camsim one file at a time, against the empty baseline: T1 facing removed 4407.7 mm³ (4264 nominal), T2 contour 3194.6 mm³ (about 3140), and the Ø16 drill alone 2280.4 mm³ (2212 for Ø16 × 11 mm). CAMotics comes out about 2–3 % higher because of its surface resolution. Without the G83 rewrite it reported 9390.6 mm³, missing both Ø4.9 holes.
+
+On the bad program (rapid inserted at N63), the built-in check flags `RAPID_INTO_STOCK` at line 22. **CAMotics independently reports `Arc radiuses differ by 65.0076mm` at line 26 and `71.0069mm` at line 28**, the same lines as the built-in `ARC_RADIUS` errors. Removed volumes agreed to −0.73 % (10 587 against 10 510 mm³).
 
 ## Results on the Phase 3 test plate job
 Job: the four Fanuc programs from Phase 3. T1 Ø50 face mill, T2 Ø10 2D contour, T3 Ø16 drill (G81), T4 Ø4.9 peck drill (G83). Stock 82×52×11 mm, WCS at the top centre of the stock.
@@ -33,7 +55,7 @@ RAPID_INTO_STOCK  bad_rapid.nc line 22 (N63)  "N63 G00 X36. Y-33."  rapid move c
 The cut is 4 mm, not 5, because T1's facing had already lowered the top to Z−1. Two follow-on `ARC_RADIUS` errors are expected: the inserted move leaves the tool somewhere the next arcs don't start from. This case is in `tests/test_gcode_check.py::test_done_criterion_rapid_through_stock_flagged_at_right_line`, which uses the real posted programs in `tests/data/plate/`.
 
 ## Tests
-Unit tests: **56/56**, of which 13 are new G-code checks. They cover:
+Unit tests: **60/60** after adding CAMotics (17 G-code tests). The two CAMotics runs are skipped when camsim is not installed. Live: **18/18**, including `gcode_check` on the live job with the stock read from Fusion and CAMotics run. They cover:
 - the real job is clean and its removal matches the CAD part within 0.2 %
 - the done criterion
 - a rapid starting low
@@ -45,7 +67,7 @@ Unit tests: **56/56**, of which 13 are new G-code checks. They cover:
 - inch and incremental input
 - canned-cycle removal and a cycle missing R
 - tool profiles
-- CAMotics status
+- CAMotics: the G83→G81 copy keeps line numbers, STL volume on binary and ASCII cubes, and (when installed) agreement with the built-in check and CAD on the plate, and the same arc lines on the bad program
 - CLI exit codes
 
 ## Limits

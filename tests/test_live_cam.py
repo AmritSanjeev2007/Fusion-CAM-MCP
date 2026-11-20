@@ -110,3 +110,17 @@ def test_post_fanuc(job):
         assert t in text, t
     assert "G81" in text and "G83" in text          # plain drill for D16, peck drill for D4.9
     assert "H00" not in text                         # length offsets follow tool numbers
+    job["nc_files"] = [f["path"] for f in files]
+
+
+def test_gcode_check_with_stock_from_fusion(job):
+    """Phase 4 on the live job: the stock box and tool list come from the Fusion setup."""
+    import json
+    from src import server
+    r = json.loads(server.gcode_check(job["nc_files"]))
+    assert r["ok"], r["problems"]
+    assert r["stock_wcs_mm"] == {"min": [-41.0, -26.0, -11.0], "max": [41.0, 26.0, 0.0]}
+    assert r["expected_tools"] == [1, 2, 3, 4] and r["stock_source"].startswith("Fusion setup")
+    assert abs(r["remaining_volume_mm3"] - 37395) / 37395 < 0.002
+    if r["camotics"].get("ran"):
+        assert r["simulation_comparison"]["agree_within_5pct"]

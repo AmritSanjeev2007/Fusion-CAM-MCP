@@ -29,6 +29,23 @@ def write(tmp_path, name, body):
 
 
 HEADER = "%\nO1001\n(T2 D=10. CR=0. - ZMIN=-5. - FLAT END MILL)\nN10 G90 G94 G17 G49 G40 G80\nN15 G21\n"
+CAMSIM = gc.find_camotics()
+needs_camotics = pytest.mark.skipif(CAMSIM is None, reason="CAMotics (camsim) not installed")
+
+
+@pytest.fixture(autouse=True)
+def builtin_only(request, monkeypatch):
+    """Keep the rule tests fast and machine-independent: CAMotics only runs in tests named *live_camotics*."""
+    if "live_camotics" not in request.node.name:
+        monkeypatch.setattr(gc, "find_camotics", lambda: None)
+
+
+def bad_rapid_program(tmp_path):
+    src = os.path.join(DATA, "mcp_plate_02_T2.nc")
+    lines = open(src, encoding="utf-8").read().splitlines()
+    i = lines.index("N65 G01 Z5. F1000.")
+    lines[i:i] = ["N62 G00 Z-5.", "N63 G00 X36. Y-33."]   # plunge outside, then rapid across the plate
+    return write(tmp_path, "bad.nc", "\n".join(lines) + "\n"), i + 2
 
 
 # ---- the real posted job
@@ -46,16 +63,12 @@ def test_posted_plate_job_is_clean_and_removal_matches_cad():
 def test_done_criterion_rapid_through_stock_flagged_at_right_line(tmp_path):
     """Plan Phase 4 'done when': a deliberately bad program (a rapid through the stock) is flagged
     at the right line."""
-    src = os.path.join(DATA, "mcp_plate_02_T2.nc")
-    lines = open(src, encoding="utf-8").read().splitlines()
-    i = lines.index("N65 G01 Z5. F1000.")
-    lines[i:i] = ["N62 G00 Z-5.", "N63 G00 X36. Y-33."]   # plunge outside, then rapid across the plate
-    bad = write(tmp_path, "bad.nc", "\n".join(lines) + "\n")
+    bad, line = bad_rapid_program(tmp_path)
     r = gc.check([os.path.join(DATA, "mcp_plate_01_T1.nc"), bad], STOCK)
     assert not r["ok"]
     hits = [p for p in r["problems"] if p["code"] == "RAPID_INTO_STOCK"]
     assert len(hits) == 1
-    assert hits[0]["file"] == "bad.nc" and hits[0]["line"] == i + 2 and hits[0]["n"] == 63
+    assert hits[0]["file"] == "bad.nc" and hits[0]["line"] == line and hits[0]["n"] == 63
     assert "N63 G00 X36. Y-33." in hits[0]["text"]
 
 
@@ -143,11 +156,66 @@ def test_tool_profiles():
     assert t[3].taper == 118.0 and t[1].d == 50.0
 
 
-def test_camotics_status_and_missing_file():
-    st = gc.camotics_status()
-    assert "installed" in st and "note" in st
+def test_missing_file_and_status_without_camotics():
+    st = gc.camotics_status()                       # find_camotics is patched out here
+    assert st["installed"] is False and "note" in st
+    r = gc.check(PLATE[:1], STOCK)
+    assert r["camotics"]["installed"] is False and "simulation_comparison" not in r
     with pytest.raises(FileNotFoundError):
         gc.check(["no_such.nc"], STOCK)
+
+
+# ---- CAMotics helpers (no install needed)
+def test_camotics_copy_rewrites_peck_cycles_keeping_lines(tmp_path):
+    src = os.path.join(DATA, "mcp_plate_04_T4.nc")
+    dst = str(tmp_path / "t4.nc")
+    assert gc.camotics_copy(src, dst) == 1
+    a = open(src, encoding="utf-8").read().splitlines()
+    b = open(dst, encoding="utf-8").read().splitlines()
+    assert len(a) == len(b)
+    assert b[17] == "N70 G98 G81 X28. Y0. Z-13.472 R4. F1000."            # was G83 ... Q1.225
+    assert [x for x, y in zip(a, b) if x != y] == ["N70 G98 G83 X28. Y0. Z-13.472 R4. Q1.225 F1000."]
+
+
+def test_stl_volume_of_a_cube(tmp_path):
+    import struct
+    v = [(0, 0, 0), (2, 0, 0), (2, 3, 0), (0, 3, 0), (0, 0, 4), (2, 0, 4), (2, 3, 4), (0, 3, 4)]
+    faces = [(0, 2, 1), (0, 3, 2), (4, 5, 6), (4, 6, 7), (0, 1, 5), (0, 5, 4),
+             (1, 2, 6), (1, 6, 5), (2, 3, 7), (2, 7, 6), (3, 0, 4), (3, 4, 7)]
+    data = b"\0" * 80 + struct.pack("<I", len(faces))
+    for f in faces:
+        data += struct.pack("<12fH", 0, 0, 0, *v[f[0]], *v[f[1]], *v[f[2]], 0)
+    p = tmp_path / "cube.stl"
+    p.write_bytes(data)
+    assert gc.stl_volume(str(p)) == pytest.approx(24.0)
+    ascii_stl = "solid c\n" + "".join(
+        "facet normal 0 0 0\nouter loop\n" + "".join("vertex %g %g %g\n" % v[k] for k in f) + "endloop\nendfacet\n"
+        for f in faces) + "endsolid c\n"
+    p2 = tmp_path / "cube_ascii.stl"
+    p2.write_text(ascii_stl)
+    assert gc.stl_volume(str(p2)) == pytest.approx(24.0)
+
+
+# ---- CAMotics itself (skipped when camsim is not installed)
+@needs_camotics
+def test_live_camotics_plate_job_agrees_with_builtin_and_cad():
+    r = gc.check(PLATE, STOCK, expected_tools=[1, 2, 3, 4])
+    c = r["camotics"]
+    assert c["ran"] and c["version"] and c["warnings"] == []
+    assert any("G81" in n for n in c["notes"])                       # the T4 peck cycle was simulated
+    assert r["simulation_comparison"]["agree_within_5pct"]
+    assert abs(c["remaining_volume_mm3"] - PART_VOLUME) / PART_VOLUME < 0.02
+    assert r["ok"] and "SIM_DISAGREE" not in codes(r)
+
+
+@needs_camotics
+def test_live_camotics_bad_program_confirms_arc_lines(tmp_path):
+    bad, line = bad_rapid_program(tmp_path)
+    r = gc.check([os.path.join(DATA, "mcp_plate_01_T1.nc"), bad], STOCK)
+    assert [p["line"] for p in r["problems"] if p["code"] == "RAPID_INTO_STOCK"] == [line]
+    cam_lines = {(w["file"], w["line"]) for w in r["camotics"]["warnings"]}
+    ours = {(p["file"], p["line"]) for p in r["problems"] if p["code"] == "ARC_RADIUS"}
+    assert ours and ours <= cam_lines                                 # CAMotics flags the same arcs
 
 
 def test_cli_exit_code(tmp_path, capsys):

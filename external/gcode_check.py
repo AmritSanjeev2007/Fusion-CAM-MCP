@@ -25,12 +25,15 @@ programs are checked here before they go near a machine:
    ball and drill profiles read from the post's tool comments, e.g.
    "(T3 D=16. CR=0. TAPER=118DEG - ZMIN=-16.807 - DRILL)". Reports removed volume and is what
    detects rapids through material.
-4. CAMotics: if a CAMotics install is found it is reported (path); running it is not wired up
-   because it could not be verified on the development PC (not installed).
+4. CAMotics: when camsim (CAMotics 1.2) is installed and a stock box is given, the same programs
+   are also simulated there and both removed volumes are reported side by side (SIM_DISAGREE
+   warning if they differ by more than 5 %). camsim skips G83/G73, so those lines are simulated
+   as G81 in a temporary copy; it reports no collisions, but its warnings (e.g. arc radii) are
+   returned with file and line. Found via CAMOTICS_HOME, PATH or the CAMotics folder under Program Files (x86).
 
 All coordinates are WCS mm (the posted program's frame). For a top-centre WCS the stock top
 is Z=0. CLI:
-    python external/gcode_check.py --stock -41,-26,-11,41,26,0 file1.nc [file2.nc ...]
+    python external/gcode_check.py --stock -41,-26,-11,41,26,0 [--no-camotics] file1.nc [file2.nc ...]
 """
 
 import argparse
@@ -476,26 +479,185 @@ class Checker:
             out["removed_volume_mm3"] = round(self.hm.removed, 1)
             out["remaining_volume_mm3"] = round(out["stock_volume_mm3"] - self.hm.removed, 1)
             out["simulation"] = f"height map, {self.hm.res:g} mm cells ({self.hm.nx}x{self.hm.ny})"
-        out["camotics"] = camotics_status()
         return out
 
 
-def camotics_status() -> dict:
-    """Report whether CAMotics is installed. It is not run automatically (not verifiable here)."""
-    cands = [shutil.which(n) for n in ("camotics", "camsim")]
-    for base in (os.environ.get("ProgramFiles", r"C:\Program Files"), os.environ.get("ProgramFiles(x86)", "")):
+def find_camotics():
+    """Path to camsim (CAMotics' command-line simulator), or None. CAMOTICS_HOME overrides."""
+    cands = []
+    home = os.environ.get("CAMOTICS_HOME")
+    if home:
+        cands += [os.path.join(home, "camsim.exe"), os.path.join(home, "camsim")]
+    cands.append(shutil.which("camsim"))
+    for base in (os.environ.get("ProgramFiles", r"C:\Program Files"),
+                 os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")):
         if base:
-            cands += [os.path.join(base, "CAMotics", n) for n in ("camotics.exe", "camsim.exe")]
-    found = [c for c in cands if c and os.path.exists(c)]
-    if found:
-        return {"installed": True, "path": found[0],
-                "note": "found but not run: the built-in height-map simulation is used"}
-    return {"installed": False, "note": "CAMotics not found; used the built-in height-map simulation"}
+            cands.append(os.path.join(base, "CAMotics", "camsim.exe"))
+    return next((c for c in cands if c and os.path.isfile(c)), None)
 
 
-def check(paths, stock=None, limits=None, expected_tools=None, clearance=0.0, res=0.5, tools=None) -> dict:
+def camotics_version(camsim):
+    """camsim --version prints 0.0 on 1.2.0, so read the version from the install's CHANGELOG."""
+    try:
+        with open(os.path.join(os.path.dirname(camsim), "CHANGELOG.md"), encoding="utf-8", errors="replace") as f:
+            for line in f:
+                m = re.match(r"##\s*v?([\d.]+)", line.strip())
+                if m:
+                    return m.group(1)
+    except OSError:
+        pass
+    return None
+
+
+def camotics_status() -> dict:
+    camsim = find_camotics()
+    if camsim:
+        return {"installed": True, "path": camsim, "version": camotics_version(camsim)}
+    return {"installed": False, "note": "CAMotics not found (install it, or set CAMOTICS_HOME); "
+                                        "only the built-in height-map simulation was run"}
+
+
+def stl_volume(path) -> float:
+    """Volume of a closed binary or ASCII STL (divergence theorem)."""
+    import struct
+    with open(path, "rb") as f:
+        data = f.read()
+    if data[:5] == b"solid" and b"facet" in data[:512]:
+        verts = [tuple(float(v) for v in m.groups())
+                 for m in re.finditer(rb"vertex\s+(\S+)\s+(\S+)\s+(\S+)", data)]
+        tris = [verts[i:i + 3] for i in range(0, len(verts) - 2, 3)]
+    else:
+        n = struct.unpack_from("<I", data, 80)[0]
+        tris = []
+        for k in range(n):
+            f = struct.unpack_from("<12f", data, 84 + 50 * k)
+            tris.append((f[3:6], f[6:9], f[9:12]))
+    v = 0.0
+    for a, b, c in tris:
+        v += (a[0] * (b[1] * c[2] - b[2] * c[1]) - a[1] * (b[0] * c[2] - b[2] * c[0])
+              + a[2] * (b[0] * c[1] - b[1] * c[0])) / 6.0
+    return abs(v)
+
+
+def _camotics_tool(t) -> dict:
+    # Bull-nose corners and drill points are modelled as cylinders (slight over-cut at the tip;
+    # through holes and profiles are unaffected).
+    shape = "ballnose" if t.kind() == "ball" else "cylindrical"
+    return {"units": "metric", "shape": shape, "diameter": t.d, "length": max(30.0, 4 * t.d),
+            "description": f"T{t.number} {t.kind()}"}
+
+
+_PECK = re.compile(r"\bG0?(83|73)\b")
+_QWORD = re.compile(r"\s*Q\s*[-+]?(?:\d+\.?\d*|\.\d+)")
+
+
+def camotics_copy(src, dst) -> int:
+    """camsim 1.2.0 skips G83/G73 ('Not implemented: G83 (Peck Drilling)'). Write G81 instead (same
+    material removed) and drop Q. Line numbers are kept, so its warnings point at the original lines."""
+    changed = 0
+    with open(src, encoding="utf-8", errors="replace") as f:
+        lines = f.read().splitlines()
+    out = []
+    for line in lines:
+        if _PECK.search(re.sub(r"\([^)]*\)", "", line).upper()):
+            line = _QWORD.sub("", _PECK.sub("G81", line.upper()))
+            changed += 1
+        out.append(line)
+    with open(dst, "w", encoding="utf-8") as f:
+        f.write("\n".join(out) + "\n")
+    return changed
+
+
+def run_camotics(paths, stock, tools, res=0.25, timeout=300) -> dict:
+    """Simulate the programs in CAMotics (camsim) on the stock box; return its removed volume.
+
+    camsim writes the cut workpiece as an STL whose surface sits slightly outside the nominal box
+    (82x52x11 measures 48398 mm3 uncut at 0.25 mm), so removal is measured against an empty program
+    on the same box and resolution, run in parallel. camsim reports no collisions; its warnings
+    (file:line) are returned."""
+    import subprocess
+    import tempfile
+    import time as _time
+    camsim = find_camotics()
+    if not camsim:
+        return camotics_status()
+    tdir = tempfile.mkdtemp(prefix="fusionmcp_camotics_")
+    try:
+        files, rewritten, names = [], 0, {}
+        for i, p in enumerate(paths):
+            dst = os.path.join(tdir, f"{i:02d}_{os.path.basename(p)}")
+            rewritten += camotics_copy(p, dst)
+            files.append(dst)
+            names[os.path.basename(dst)] = os.path.basename(p)
+        empty = os.path.join(tdir, "empty.nc")
+        with open(empty, "w") as f:
+            f.write("%\nG90 G21\nM30\n%\n")
+        (x0, y0, z0), (x1, y1, z1) = stock
+        tool_table = {str(n): _camotics_tool(t) for n, t in sorted(tools.items())} or \
+            {"1": {"units": "metric", "shape": "cylindrical", "diameter": 1.0, "length": 10.0}}
+
+        def project(name, flist):
+            proj = {"units": "metric", "resolution-mode": "manual", "resolution": res, "tools": tool_table,
+                    "workpiece": {"automatic": False, "margin": 0,
+                                  "bounds": {"min": [x0, y0, z0], "max": [x1, y1, z1]}},
+                    "files": [f.replace("\\", "/") for f in flist]}
+            pp = os.path.join(tdir, name + ".camotics")
+            with open(pp, "w") as f:
+                json.dump(proj, f)
+            return pp
+
+        t0 = _time.time()
+        procs = {}
+        for name, flist in (("job", files), ("empty", [empty])):
+            stl = os.path.join(tdir, name + ".stl")
+            procs[name] = (subprocess.Popen([camsim, "--binary", project(name, flist), stl],
+                                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                                            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)), stl)
+        logs, vols = {}, {}
+        for name, (pr, stl) in procs.items():
+            try:
+                out, _ = pr.communicate(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                for q, _s in procs.values():
+                    q.kill()
+                return {"installed": True, "path": camsim, "ran": False, "error": f"camsim timed out after {timeout}s"}
+            logs[name] = out or ""
+            if pr.returncode != 0 or not os.path.exists(stl):
+                return {"installed": True, "path": camsim, "ran": False,
+                        "error": f"camsim exit {pr.returncode}: {(out or '')[-500:]}"}
+            vols[name] = stl_volume(stl)
+        warnings, offsets = [], 0
+        for line in logs["job"].splitlines():
+            m = re.match(r"WARNING:(.*):(\d+):(.*)", line.strip())
+            if not m:
+                continue
+            if "Tool Length Offset not supported" in m.group(3):
+                offsets += 1
+                continue
+            base = os.path.basename(m.group(1).replace("/", os.sep))
+            warnings.append({"file": names.get(base, base), "line": int(m.group(2)), "message": m.group(3).strip()})
+        removed = vols["empty"] - vols["job"]
+        stock_vol = (x1 - x0) * (y1 - y0) * (z1 - z0)
+        out = {"installed": True, "path": camsim, "version": camotics_version(camsim), "ran": True,
+               "resolution_mm": res, "seconds": round(_time.time() - t0, 1),
+               "removed_volume_mm3": round(removed, 1), "remaining_volume_mm3": round(stock_vol - removed, 1),
+               "warnings": warnings,
+               "notes": ["CAMotics reports no collisions: RAPID_INTO_STOCK comes from the built-in simulation",
+                         "drill points and bull-nose corners are modelled as cylinders in CAMotics"]}
+        if rewritten:
+            out["notes"].append(f"{rewritten} G83/G73 peck line(s) simulated as G81 (camsim 1.2 skips G83)")
+        if offsets:
+            out["notes"].append(f"{offsets} 'Tool Length Offset not supported' warning(s) ignored")
+        return out
+    finally:
+        shutil.rmtree(tdir, ignore_errors=True)
+
+
+def check(paths, stock=None, limits=None, expected_tools=None, clearance=0.0, res=0.5, tools=None,
+          camotics=True, camotics_res=0.25) -> dict:
     """paths: .nc files in machining order. stock / limits: ((xmin, ymin, zmin), (xmax, ymax, zmax)) in WCS mm.
-    tools: optional {number: {"diameter_mm", "corner_radius_mm", "tip_angle_deg"}} overriding the post comments."""
+    tools: optional {number: {"diameter_mm", "corner_radius_mm", "tip_angle_deg"}} overriding the post comments.
+    camotics: also simulate in CAMotics when it is installed and a stock box is given."""
     if isinstance(paths, str):
         paths = [paths]
     for p in paths:
@@ -504,7 +666,25 @@ def check(paths, stock=None, limits=None, expected_tools=None, clearance=0.0, re
     tl = {}
     for n, t in (tools or {}).items():
         tl[int(n)] = Tool(int(n), t["diameter_mm"], t.get("corner_radius_mm", 0.0), t.get("tip_angle_deg"))
-    return Checker(_box(stock), _box(limits), expected_tools, clearance, res, tools=tl).run(paths)
+    ck = Checker(_box(stock), _box(limits), expected_tools, clearance, res, tools=tl)
+    r = ck.run(paths)
+    if not camotics or ck.stock is None:
+        return r
+    if not find_camotics():
+        r["camotics"] = camotics_status()
+        return r
+    cr = run_camotics(paths, ck.stock, ck.tools, camotics_res)
+    r["camotics"] = cr
+    if cr.get("ran") and r.get("removed_volume_mm3"):
+        b, c = r["removed_volume_mm3"], cr["removed_volume_mm3"]
+        diff = round((c - b) / b * 100, 2)
+        r["simulation_comparison"] = {"builtin_removed_mm3": b, "camotics_removed_mm3": c,
+                                      "difference_pct": diff, "agree_within_5pct": abs(diff) <= 5}
+        if abs(diff) > 5:
+            r["problems"].append({"severity": "warning", "code": "SIM_DISAGREE", "file": "", "line": 0, "n": None,
+                                  "text": "", "message": f"built-in and CAMotics removed volumes differ by {diff} %"})
+            r["counts"]["warning"] += 1
+    return r
 
 
 def _box(b):
@@ -532,8 +712,9 @@ def main(argv=None):
     ap.add_argument("--tools", type=lambda s: [int(v) for v in s.split(",")], help="expected tool numbers")
     ap.add_argument("--clearance", type=float, default=0.0)
     ap.add_argument("--res", type=float, default=0.5)
+    ap.add_argument("--no-camotics", action="store_true", help="skip CAMotics even if it is installed")
     a = ap.parse_args(argv)
-    r = check(a.files, a.stock, a.limits, a.tools, a.clearance, a.res)
+    r = check(a.files, a.stock, a.limits, a.tools, a.clearance, a.res, camotics=not a.no_camotics)
     print(json.dumps(r, indent=1))
     return 0 if r["ok"] else 1
 

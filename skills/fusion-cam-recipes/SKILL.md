@@ -119,5 +119,8 @@ gcode_check(paths=[all files cam_post returned, in order])
 - `remaining_volume_mm3` should be close to the CAD volume after full machining (plate:
   37380 against 37395 mm³). A large difference means something was missed or over-cut.
 - Pass `limits_wcs_mm` with the machine's travels in WCS when they are known.
-- CAMotics is not installed on this PC; `gcode_check` uses its own height-map simulation (3-axis,
-  cutter profile only, no holder or fixture).
+- CAMotics 1.2.0 is installed, so `gcode_check` also runs camsim and reports `simulation_comparison`.
+  On the plate job: built-in 9524 mm³ against CAMotics 9767 mm³ (+2.6 %). More than 5 % apart gives `SIM_DISAGREE`: find
+  out why before running. CAMotics doesn't detect rapids into stock (only the built-in check does), and
+  camsim skips G83, so the checker feeds it G81 instead. The built-in simulation is 3-axis
+  (cutter profile only, no holder or fixture).

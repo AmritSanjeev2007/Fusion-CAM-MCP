@@ -66,7 +66,7 @@ All tool inputs and outputs are in **mm** (mm², mm³), seconds and mm/min. The 
 | `cam_generate(targets, timeout_s=600, job)` | Starts generation and polls with short calls. Returns validity and `checkToolpath` per operation |
 | `cam_machining_time(target, rapid_mm_min=5000, tool_change_s=15)` | Cycle time (s), feed/rapid distance (mm), tool changes, per operation |
 | `cam_post(post="fanuc.cps", output_dir, filename, split="auto")` | G-code via an NC program. On Personal Use it posts one program per tool. Returns the `.nc` paths, line counts and file heads |
-| `gcode_check(paths, stock_wcs_mm=None, setup, limits_wcs_mm, expected_tools)` | Runs **outside Fusion**: height-map stock simulation plus rule checks by line. The stock and tool list come from the setup if not given |
+| `gcode_check(paths, stock_wcs_mm=None, setup, limits_wcs_mm, expected_tools, camotics=True)` | Runs **outside Fusion**: height-map stock simulation plus rule checks by line, and CAMotics side by side when installed. The stock and tool list come from the setup if not given |
 
 Tools that modify documents (`import_step`, `close_scratch` and every `cam_*` op that creates or posts) refuse while a Fusion command dialog is open. The CAM tools only modify scratch documents from `import_step` unless you pass `allow_user_document=true`. A call that times out may still be running in Fusion, so call `status`/`inspect`/`cam_status` before retrying.
 
@@ -110,7 +110,7 @@ G-code check CLI: `python external/gcode_check.py --stock -41,-26,-11,41,26,0 --
 
 ## Known limits
 - **Fusion Personal Use**: no tool changes in one NC program (so `cam_post` splits per tool), and rapids are posted at the cutting feed. An Education licence removes both.
-- `gcode_check` is 3-axis and models the cutter profile only (no holder or fixture). CAMotics is detected if installed but not run (not installed on the development PC).
+- `gcode_check` is 3-axis and models the cutter profile only (no holder or fixture). If CAMotics 1.2 is installed it also runs `camsim` and compares removed volumes (plate: built-in 9524 against CAMotics 9767 mm³). camsim reports no collisions and skips G83, so the checker gives it G81.
 - Geometry selection is wrapped for holes and the outline contour. Pocket and face selections for other strategies go through `execute_python`.
 - The official Autodesk Fusion MCP (port 27182) is not set up or verified here; see the usage skill, section 9.
 

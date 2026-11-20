@@ -106,7 +106,7 @@ Claude ─stdio─> fusion-cam-mcp.exe (src/server.py) ─TCP 127.0.0.1:27190 + 
 | `cam_machining_time(target, rapid_mm_min=5000, tool_change_s=15)` | Plate: `total_s 151.2 ("2:31.2")`, feed 1294 mm, rapid 702.9 mm, 3 tool changes, with a per-op breakdown. |
 | `cam_post(post="fanuc.cps", output_dir, filename, split="auto")` | Returns files with `lines` and `head`. Personal Use auto-splits into one program per tool (section 7). The default folder is `test_output/nc`. |
 | `cam_status(check=True)` | Setups, ops, tools, validity, NC programs, `last_crash`. |
-| `gcode_check(paths, stock_wcs_mm=None, setup=None, limits_wcs_mm, expected_tools)` | **Always run it on posted files.** It runs outside Fusion. If no stock is given, the stock box and tool list come from the setup. Plate: `ok: true`, 3 info `BELOW_STOCK` (through cuts), removed 9524 mm³, remaining 37380 against CAD 37395. |
+| `gcode_check(paths, stock_wcs_mm=None, setup=None, limits_wcs_mm, expected_tools, camotics=True)` | **Always run it on posted files.** It runs outside Fusion. If no stock is given, the stock box and tool list come from the setup. Plate: `ok: true`, 3 info `BELOW_STOCK` (through cuts), removed 9524 mm³, remaining 37380 against CAD 37395. With CAMotics 1.2.0 installed it also runs camsim (about 10 s): `simulation_comparison` gives built-in 9524 against CAMotics 9767 mm³ (+2.55 %), and more than 5 % apart gives `SIM_DISAGREE`. |
 
 ## 5. Worked job: the Inventor test plate
 
@@ -162,6 +162,7 @@ dies. So:
 | `cam.checkAllToolpaths()` raises "The operations are not CAM objects"; `checkToolpath([ops])` raises TypeError | API quirks on 2706.1.17 | The tools call `checkToolpath(op)` once per operation. |
 | `op.isGenerating` stays True after generation | API quirk | Ignored; only `GenerateToolpathFuture.isGenerationCompleted` is used. |
 | NC file missing from `output_dir` | Phase 0 saw the folder ignored (set as `.value.value`) | Setting it as a quoted expression works; `cam_post` still looks in Fusion's default `NC Programs` folder and moves the file. |
+| CAMotics: `Not implemented: G83 (Peck Drilling)`, `Tool Length Offset not supported`; `camsim --version` prints 0.0 | camsim 1.2.0 limits | `gcode_check` feeds camsim a copy with G83/G73 → G81 (same lines), ignores the G43 warnings, and reads the version from CAMotics' CHANGELOG. CAMotics reports no collisions: `RAPID_INTO_STOCK` comes from the built-in check. Its other warnings (e.g. `Arc radiuses differ`) come back with file and line. |
 | Imported M6 holes are Ø4.917 cylinders | STEP carries no thread data | Tapping needs an explicit op with a tap tool (recipes). |
 
 ## 8. Troubleshooting

@@ -338,7 +338,7 @@ def _load_gcode_check():
 @mcp.tool()
 def gcode_check(paths: list[str], stock_wcs_mm: list[float] | None = None, setup: str | None = None,
                 limits_wcs_mm: list[float] | None = None, expected_tools: list[int] | None = None,
-                clearance_mm: float = 0.0, resolution_mm: float = 0.5) -> str:
+                clearance_mm: float = 0.0, resolution_mm: float = 0.5, camotics: bool = True) -> str:
     """Check posted G-code OUTSIDE Fusion before it goes near a machine (Fusion has no stock simulation;
     checkToolpath is not one). Runs in the MCP server, so Fusion is only needed to read the stock.
 
@@ -351,6 +351,9 @@ def gcode_check(paths: list[str], stock_wcs_mm: list[float] | None = None, setup
     comments) and reports problems by file and line: RAPID_INTO_STOCK, FEED_MISSING, SPINDLE_OFF,
     NO_TOOL, TOOL_UNEXPECTED, H_MISMATCH, ENVELOPE, ARC_RADIUS, NO_END (errors/warnings) and BELOW_STOCK
     (info: normal for through holes and profiles). ok=false means do not run the program.
+    If CAMotics is installed (camotics=true), the same programs are also simulated in CAMotics (about
+    10 s); `camotics` and `simulation_comparison` give both removed volumes side by side, and a
+    SIM_DISAGREE warning is added if they differ by more than 5 %. CAMotics reports no collisions.
     """
     gc = _load_gcode_check()
     source = "argument"
@@ -368,7 +371,8 @@ def gcode_check(paths: list[str], stock_wcs_mm: list[float] | None = None, setup
             expected_tools = sorted({o["tool"]["number"] for o in s["operations"] if o.get("tool", {}).get("number")})
         source = f"Fusion setup '{s['name']}' in {st['document']}"
     try:
-        r = gc.check(paths, stock_wcs_mm, limits_wcs_mm, expected_tools, clearance_mm, resolution_mm)
+        r = gc.check(paths, stock_wcs_mm, limits_wcs_mm, expected_tools, clearance_mm, resolution_mm,
+                     camotics=camotics)
     except (FileNotFoundError, ValueError) as e:
         return f"ERROR: {e}"
     r["stock_source"] = source
