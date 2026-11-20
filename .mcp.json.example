@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "fusion-cam": {
+      "command": "C:/Fusion MCP/.venv/Scripts/fusion-cam-mcp.exe",
+      "env": { "FUSION_MCP_PORT": "27190" }
+    }
+  }
+}

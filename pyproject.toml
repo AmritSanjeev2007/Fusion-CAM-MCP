@@ -1,6 +1,6 @@
 [project]
 name = "fusion-cam-mcp"
-version = "0.1.0"
+version = "1.0.0"
 description = "MCP server for CAM in Autodesk Fusion (STEP from Inventor -> setups, toolpaths, G-code) via a local add-in bridge"
 requires-python = ">=3.12"
 dependencies = [

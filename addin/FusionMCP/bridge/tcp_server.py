@@ -17,7 +17,7 @@ import traceback
 
 from . import protocol
 
-ADDIN_VERSION = "0.1.0"
+ADDIN_VERSION = "1.0.0"
 SOCKET_OPS = {"hello"}
 
 

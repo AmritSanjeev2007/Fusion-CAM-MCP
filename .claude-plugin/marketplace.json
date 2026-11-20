@@ -1,0 +1,11 @@
+{
+  "name": "fusion-cam-mcp",
+  "owner": { "name": "Amrit" },
+  "plugins": [
+    {
+      "name": "fusion-cam",
+      "source": "./",
+      "description": "fusion-cam-usage and fusion-cam-recipes skills for the fusion-cam MCP server."
+    }
+  ]
+}

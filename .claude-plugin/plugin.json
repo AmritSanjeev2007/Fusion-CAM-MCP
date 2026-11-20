@@ -1,0 +1,7 @@
+{
+  "name": "fusion-cam",
+  "version": "1.0.0",
+  "description": "Skills for CAM in Autodesk Fusion through the fusion-cam MCP server: STEP from Inventor, setups, toolpaths, posting and G-code checks (fusion-cam-usage, fusion-cam-recipes).",
+  "author": { "name": "Amrit" },
+  "keywords": ["fusion", "cam", "cnc", "inventor", "gcode", "mcp"]
+}

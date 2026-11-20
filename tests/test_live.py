@@ -81,14 +81,22 @@ def plate(client):
 
 
 def test_close_scratch_refuses_user_documents(client):
-    """Runs before the plate is imported, so a name match can only hit the user's documents."""
+    """Runs before the plate is imported. A scratch document left over from an earlier run may share
+    the user's name ("Untitled"): then only the scratch one may close and the user's must be refused."""
     st = client.call("status", timeout=10)
     user = [d["name"] for d in st["documents"] if not d["scratch"]]
     if not user:
         pytest.skip("no user document open to test the refusal on")
-    with pytest.raises(BridgeError) as e:
-        client.call("close_scratch", {"name": user[0]})
-    assert "Refusing" in str(e.value)
+    namesake_scratch = any(d["scratch"] and d["name"] == user[0] for d in st["documents"])
+    if namesake_scratch:
+        r = client.call("close_scratch", {"name": user[0]})
+        assert any(x["document"] == user[0] for x in r["refused"])
+    else:
+        with pytest.raises(BridgeError) as e:
+            client.call("close_scratch", {"name": user[0]})
+        assert "Refusing" in str(e.value)
+    after = [d["name"] for d in client.call("status", timeout=10)["documents"] if not d["scratch"]]
+    assert after == user                                 # the user's documents are all still open
     with pytest.raises(BridgeError):
         client.call("close_scratch", {"scratch_id": "no-such-id"})
 

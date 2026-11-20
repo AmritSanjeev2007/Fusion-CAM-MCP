@@ -6,7 +6,7 @@
     "description": {
         "": "Local bridge for the fusion-cam MCP server (127.0.0.1:27190)."
     },
-    "version": "0.1.0",
+    "version": "1.0.0",
     "runOnStartup": true,
     "supportedOS": "windows",
     "editEnabled": true
