@@ -4,7 +4,7 @@ Add new ops by registering them in `_build()`. `reload` (handled in FusionMCP.py
 every ops module except `state` and `breadcrumb`, then calls `_build()` again.
 """
 
-from . import breadcrumb, core, docs, geometry
+from . import breadcrumb, cam, core, docs, geometry, tools, trace
 
 OPS: dict = {}
 
@@ -19,6 +19,15 @@ def _build():
         "inspect": geometry.inspect,
         "screenshot": docs.screenshot,
         "close_scratch": docs.close_scratch,
+        "cam_status": cam.cam_status,
+        "cam_create_setup": cam.cam_create_setup,
+        "cam_list_strategies": cam.cam_list_strategies,
+        "cam_list_tools": tools.cam_list_tools,
+        "cam_add_operation": cam.cam_add_operation,
+        "cam_generate_start": cam.cam_generate_start,
+        "cam_generate_poll": cam.cam_generate_poll,
+        "cam_machining_time": cam.cam_machining_time,
+        "cam_post": cam.cam_post,
     })
 
 
@@ -37,7 +46,11 @@ def handle(req: dict):
     elif op == "import_step":
         summary = str(args.get("path", ""))[-120:]
     elif op == "close_scratch":
-        summary = str(args.get("name") or "all")[:80]
+        summary = str(args.get("scratch_id") or args.get("name") or "all")[:80]
+    elif op.startswith("cam_"):
+        summary = " ".join(f"{k}={args[k]}" for k in ("setup", "strategy", "tool_id", "targets", "target", "post",
+                                                     "source") if args.get(k) is not None)[:120]
+    trace.current.update(op=op, id=req.get("id"))
     breadcrumb.begin(op, req.get("id"), summary)
     ok = False
     try:

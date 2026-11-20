@@ -2,7 +2,9 @@
 
 Phase 1 tools: status, execute_python, reload_api.
 Phase 2 tools (STEP import from Inventor): import_step, inspect, screenshot, close_scratch.
-CAM tools arrive in Phase 3 (see FUSION_MCP_PLAN.md). Every tool takes and returns mm.
+Phase 3 tools (CAM): cam_status, cam_create_setup, cam_list_strategies, cam_list_tools,
+cam_add_operation, cam_generate, cam_machining_time, cam_post.
+Every tool takes and returns mm (times in s, feeds in mm/min).
 """
 
 import json
@@ -10,14 +12,17 @@ import json
 from mcp.server.fastmcp import FastMCP
 
 from .bridge_client import BridgeClient, BridgeError
+from .polling import poll_generation
 
 mcp = FastMCP(
     "fusion-cam",
     instructions=(
         "CAM in Autodesk Fusion through the FusionMCP add-in. Models come from Inventor as STEP files; "
         "Fusion is only used for machining (setups, toolpaths, posting). Call status first. "
-        "Workflow: import_step (STEP exported from Inventor) -> inspect -> screenshot -> CAM -> close_scratch. "
-        "All tool inputs and outputs are in mm (mm^2, mm^3). A call that times out may still finish inside "
+        "Workflow: import_step (STEP exported from Inventor) -> inspect -> screenshot -> cam_create_setup -> "
+        "cam_list_tools -> cam_add_operation (face, contour2d, drill, ...) -> cam_generate -> cam_machining_time -> "
+        "cam_post -> close_scratch. CAM tools only modify scratch documents from import_step. "
+        "All tool inputs and outputs are in mm (mm^2, mm^3), seconds and mm/min. A call that times out may still finish inside "
         "Fusion: call status and inspect before retrying it. "
         "execute_python runs on Fusion's main thread in a persistent namespace with app, ui, adsk, doc, "
         "design, root, cam, mm(), deg() bound; the raw API uses cm and radians. A bad adsk.cam call can crash "
@@ -164,6 +169,157 @@ def close_scratch(name: str | None = None, scratch_id: str | None = None, timeou
     if scratch_id:
         args["scratch_id"] = scratch_id
     return _json("close_scratch", args, timeout_s)
+
+
+# ---------------------------------------------------------------- Phase 3: CAM
+@mcp.tool()
+def cam_status(check: bool = True, timeout_s: float = 60) -> str:
+    """CAM state of the active document. Read-only; lengths in mm.
+
+    Setups (WCS, stock offsets, stock box in WCS mm, model size), operations with strategy, tool
+    (number, type, diameter mm), toolpath present/valid, errors/warnings and checkToolpath (check=true),
+    NC programs, running generation jobs, and last_crash (op and step) if Fusion crashed in a call.
+    """
+    return _json("cam_status", {"check": check}, timeout_s)
+
+
+@mcp.tool()
+def cam_create_setup(stock_offset_mm: float | dict = 1.0, wcs: str = "top-centre", body: str | int | None = None,
+                     name: str | None = None, allow_user_document: bool = False, timeout_s: float = 60) -> str:
+    """Create a milling setup on the scratch document (opens the Manufacture workspace). Units mm.
+
+    stock_offset_mm: relative-box stock, a number (sides and top; bottom 0) or {"sides", "top", "bottom"}.
+    wcs: stock box point: 'top-centre' (default), 'top-corner-1'..'top-corner-4' (1=-X-Y, 2=+X-Y, 3=-X+Y,
+    4=+X+Y), 'centre', 'bottom-centre', 'bottom-corner-N'; prefix 'model-' for the model box instead; or
+    'model-origin'. body: body name or index (default: all solid bodies). Returns the stock box in world mm
+    and in WCS mm and the WCS origin in world mm. Refuses on documents not created by import_step unless
+    allow_user_document=true, and while Fusion is mid-command.
+    """
+    args = {"stock_offset_mm": stock_offset_mm, "wcs": wcs, "allow_user_document": allow_user_document}
+    if body is not None:
+        args["body"] = body
+    if name:
+        args["name"] = name
+    return _json("cam_create_setup", args, timeout_s)
+
+
+@mcp.tool()
+def cam_list_strategies(setup: str | None = None, timeout_s: float = 30) -> str:
+    """List the operation strategies Fusion offers for a setup (live; 55 milling strategies on 2706.1.17,
+    e.g. face, adaptive2d, pocket2d, contour2d, drill, bore, chamfer2d, adaptive, parallel, scallop).
+    Pass the 'name' to cam_add_operation."""
+    return _json("cam_list_strategies", {"setup": setup} if setup else {}, timeout_s)
+
+
+@mcp.tool()
+def cam_list_tools(source: str = "samples", library: str | None = None, type: str | None = None,
+                   diameter_min_mm: float | None = None, diameter_max_mm: float | None = None,
+                   text: str | None = None, limit: int = 40, timeout_s: float = 60) -> str:
+    """Find cutting tools; diameters in mm. Returns tool ids for cam_add_operation.
+
+    source: 'samples' (Fusion's bundled libraries, e.g. 'Milling Tools (Metric)', 'Hole Making Tools
+    (Metric)', 'Tutorial Tools (Metric)'; call with no filters to list them), a path to a tool library .json
+    exported from Fusion, or 'cloud' (Fusion's online library: slow, about 8 s, and implicated in a Fusion
+    crash in Phase 0, so only when the user asks). type: e.g. 'flat end mill', 'face mill', 'drill',
+    'spot drill', 'tap right hand', 'chamfer mill'. text filters the description. The sample tools carry
+    generic feeds/speeds presets (e.g. S5000 F1000): review them before real machining.
+    """
+    args = {"source": source, "limit": limit}
+    for k, v in (("library", library), ("type", type), ("diameter_min_mm", diameter_min_mm),
+                 ("diameter_max_mm", diameter_max_mm), ("text", text)):
+        if v is not None:
+            args[k] = v
+    return _json("cam_list_tools", args, timeout_s)
+
+
+@mcp.tool()
+def cam_add_operation(strategy: str, tool_id: str, setup: str | None = None, geometry: dict | None = None,
+                      params: dict | None = None, params_json: str | None = None, tool_number: int | None = None,
+                      name: str | None = None, allow_user_document: bool = False, timeout_s: float = 60) -> str:
+    """Add an operation to a setup with a tool from cam_list_tools (made with Tool.createFromJson).
+
+    strategy: a name from cam_list_strategies (face, contour2d, pocket2d, adaptive2d, drill, ...).
+    geometry, the selections a strategy needs:
+      {"holes": {"diameter_mm": 16, "tol_mm": 0.01}} or {"holes": "all"}: hole faces for drill/bore;
+      {"contour": "outline", "side": "outside"}: contour2d on the part's base silhouette (climb cut).
+    params / params_json: Fusion parameter name -> value. Strings are expressions and LENGTHS NEED UNITS
+    ('1 mm', '-0.5 mm'); bools become true/false; numbers are unitless. Verified names: contour2d
+    bottomHeight_offset, doMultipleDepths, maximumStepdown; drill drillTipThroughBottom, breakThroughDepth,
+    cycleType ("'drilling'", "'deep-drilling'"), incrementalDepth; any op tool_spindleSpeed, tool_feedCutting.
+    tool_number: default reuses the number of the same tool, else the next free one (H/D offsets follow).
+    Returns parameter_errors for any names that did not apply.
+    """
+    args = {"strategy": strategy, "tool_id": tool_id, "allow_user_document": allow_user_document}
+    for k, v in (("setup", setup), ("geometry", geometry), ("params", params), ("params_json", params_json),
+                 ("tool_number", tool_number), ("name", name)):
+        if v is not None:
+            args[k] = v
+    return _json("cam_add_operation", args, timeout_s)
+
+
+@mcp.tool()
+def cam_generate(targets: list[str] | None = None, setup: str | None = None, job: str | None = None,
+                 timeout_s: float = 600, allow_user_document: bool = False) -> str:
+    """Generate toolpaths and wait for them (seconds). Returns each operation's toolpath validity and
+    checkToolpath result, plus all_valid.
+
+    targets: setup or operation names (default: all operations of the last setup). Fusion generates in the
+    background and this tool polls with short calls, so Fusion stays responsive. If timeout_s passes,
+    generation continues in Fusion: call cam_generate(job=<id>) to keep waiting rather than starting again.
+    A bad adsk.cam call can crash Fusion: if status reports last_crash, do not repeat that call unchanged.
+    """
+    if job is None:
+        args = {"allow_user_document": allow_user_document}
+        if targets:
+            args["targets"] = targets
+        if setup:
+            args["setup"] = setup
+        try:
+            started = _client.call("cam_generate_start", args, timeout=60)
+        except BridgeError as e:
+            return _fmt_error(e)
+        job = started["job"]
+    try:
+        res = poll_generation(lambda op, a, t: _client.call(op, a, timeout=t), job, timeout_s)
+    except BridgeError as e:
+        return (_fmt_error(e) + f"\nGeneration job {job} may still be running: call cam_status or "
+                f"cam_generate(job='{job}').")
+    return json.dumps(res, indent=1)
+
+
+@mcp.tool()
+def cam_machining_time(target: str | None = None, rapid_mm_min: float = 5000, tool_change_s: float = 15,
+                       feed_scale_pct: float = 100, timeout_s: float = 60) -> str:
+    """Estimated cycle time in seconds for a setup or operation (default: the last setup), with feed and
+    rapid distances in mm, tool changes and a per-operation breakdown. rapid_mm_min (mm/min) and
+    tool_change_s are machine assumptions. Needs generated toolpaths."""
+    args = {"rapid_mm_min": rapid_mm_min, "tool_change_s": tool_change_s, "feed_scale_pct": feed_scale_pct}
+    if target:
+        args["target"] = target
+    return _json("cam_machining_time", args, timeout_s)
+
+
+@mcp.tool()
+def cam_post(post: str = "fanuc.cps", targets: list[str] | None = None, setup: str | None = None,
+             output_dir: str | None = None, filename: str | None = None, program_name: str = "1001",
+             split: str = "auto", head_lines: int = 20, allow_user_document: bool = False,
+             timeout_s: float = 180) -> str:
+    """Post-process to G-code; returns the .nc paths, line counts and the first head_lines lines.
+
+    post: a post from Fusion's library by name ('fanuc.cps') or a system:// URL. targets: setup/operation
+    names (default: all operations of the last setup), which need valid toolpaths. output_dir default:
+    <repo>/test_output/nc. split: 'auto' posts one program, but Fusion for Personal Use refuses tool
+    changes in one program, so it then writes one program per tool (<filename>_01_T1.nc, ...; run them in
+    order); 'tool' always splits; 'none' fails instead. Files Fusion writes to its default NC folder are
+    moved to output_dir. A bad adsk.cam call can crash Fusion: if status reports last_crash, do not repeat
+    that call unchanged.
+    """
+    args = {"post": post, "program_name": program_name, "split": split, "head_lines": head_lines,
+            "allow_user_document": allow_user_document}
+    for k, v in (("targets", targets), ("setup", setup), ("output_dir", output_dir), ("filename", filename)):
+        if v is not None:
+            args[k] = v
+    return _json("cam_post", args, timeout_s)
 
 
 def main():

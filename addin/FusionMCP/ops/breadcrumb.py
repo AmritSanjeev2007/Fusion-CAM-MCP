@@ -4,6 +4,9 @@ Before every main-thread op the add-in writes `BEGIN <op> <id>` and fsyncs it; a
 `END <op> <id> ok|fail`. If Fusion dies mid-call (Phase 0 run 1: an adsk.cam call killed the
 process with no Python exception), the next add-in start finds a BEGIN with no END and
 `status` reports which call crashed Fusion, so it is not blindly retried.
+
+CAM ops add `STEP <op> <id> <text>` lines (ops/trace.py) before each risky adsk.cam call; the
+crash report then also names the last step reached.
 """
 
 import os
@@ -39,6 +42,7 @@ def startup() -> dict | None:
     crashed = None
     if os.path.exists(p):
         open_calls: dict[str, str] = {}
+        steps: dict[str, str] = {}
         with open(p, encoding="utf-8", errors="replace") as f:
             for line in f:
                 parts = line.rstrip("\n").split(" ", 5)
@@ -47,15 +51,22 @@ def startup() -> dict | None:
                 kind, op, rid = parts[2], parts[3], parts[4]
                 if kind == "BEGIN":
                     open_calls[rid] = line.strip()
+                    steps.pop(rid, None)
+                elif kind == "STEP":
+                    steps[rid] = parts[5] if len(parts) > 5 else ""
                 elif kind == "END":
                     open_calls.pop(rid, None)
+                    steps.pop(rid, None)
                 elif kind == "STARTUP":
                     open_calls.clear()
+                    steps.clear()
         if open_calls:
             last = list(open_calls.values())[-1]
             parts = last.split(" ", 5)
             crashed = {"when": f"{parts[0]} {parts[1]}", "op": parts[3], "id": parts[4],
                        "summary": parts[5] if len(parts) > 5 else ""}
+            if parts[4] in steps:
+                crashed["step"] = steps[parts[4]]
         if os.path.getsize(p) > MAX_BYTES:
             os.replace(p, p + ".old")
     _write("STARTUP - -")
