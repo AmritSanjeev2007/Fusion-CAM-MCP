@@ -4,6 +4,7 @@ Phase 1 tools: status, execute_python, reload_api.
 Phase 2 tools (STEP import from Inventor): import_step, inspect, screenshot, close_scratch.
 Phase 3 tools (CAM): cam_status, cam_create_setup, cam_list_strategies, cam_list_tools,
 cam_add_operation, cam_generate, cam_machining_time, cam_post.
+Phase 4 tool: gcode_check (external/gcode_check.py, runs outside Fusion).
 Every tool takes and returns mm (times in s, feeds in mm/min).
 """
 
@@ -21,7 +22,8 @@ mcp = FastMCP(
         "Fusion is only used for machining (setups, toolpaths, posting). Call status first. "
         "Workflow: import_step (STEP exported from Inventor) -> inspect -> screenshot -> cam_create_setup -> "
         "cam_list_tools -> cam_add_operation (face, contour2d, drill, ...) -> cam_generate -> cam_machining_time -> "
-        "cam_post -> close_scratch. CAM tools only modify scratch documents from import_step. "
+        "cam_post -> gcode_check (always, before any machine) -> close_scratch. CAM tools only modify scratch "
+        "documents from import_step. "
         "All tool inputs and outputs are in mm (mm^2, mm^3), seconds and mm/min. A call that times out may still finish inside "
         "Fusion: call status and inspect before retrying it. "
         "execute_python runs on Fusion's main thread in a persistent namespace with app, ui, adsk, doc, "
@@ -320,6 +322,58 @@ def cam_post(post: str = "fanuc.cps", targets: list[str] | None = None, setup: s
         if v is not None:
             args[k] = v
     return _json("cam_post", args, timeout_s)
+
+
+# ---------------------------------------------------------------- Phase 4: G-code check (outside Fusion)
+def _load_gcode_check():
+    import importlib.util
+    import os
+    path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "external", "gcode_check.py")
+    spec = importlib.util.spec_from_file_location("fusionmcp_gcode_check", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+@mcp.tool()
+def gcode_check(paths: list[str], stock_wcs_mm: list[float] | None = None, setup: str | None = None,
+                limits_wcs_mm: list[float] | None = None, expected_tools: list[int] | None = None,
+                clearance_mm: float = 0.0, resolution_mm: float = 0.5) -> str:
+    """Check posted G-code OUTSIDE Fusion before it goes near a machine (Fusion has no stock simulation;
+    checkToolpath is not one). Runs in the MCP server, so Fusion is only needed to read the stock.
+
+    paths: .nc files in machining order (pass all files cam_post wrote, e.g. one per tool on Personal
+    Use). Coordinates are WCS mm. stock_wcs_mm: [xmin, ymin, zmin, xmax, ymax, zmax]; if omitted, the
+    stock box and the expected tool numbers are read from the Fusion setup (cam_status stock_in_wcs_mm;
+    `setup` name, default the last setup). limits_wcs_mm: optional axis envelope, same format.
+    clearance_mm: rapids below stock top + clearance inside the footprint are warned about.
+    Simulates material removal on a height map (resolution_mm cells; tool shapes from the post's tool
+    comments) and reports problems by file and line: RAPID_INTO_STOCK, FEED_MISSING, SPINDLE_OFF,
+    NO_TOOL, TOOL_UNEXPECTED, H_MISMATCH, ENVELOPE, ARC_RADIUS, NO_END (errors/warnings) and BELOW_STOCK
+    (info: normal for through holes and profiles). ok=false means do not run the program.
+    """
+    gc = _load_gcode_check()
+    source = "argument"
+    if stock_wcs_mm is None:
+        try:
+            st = _client.call("cam_status", {"check": False}, timeout=30)
+        except BridgeError as e:
+            return _fmt_error(e) + "\nPass stock_wcs_mm explicitly to check without Fusion."
+        setups = st.get("setups") or []
+        s = next((x for x in setups if x["name"] == setup), None) if setup else (setups[-1] if setups else None)
+        if s is None or "stock_in_wcs_mm" not in s:
+            return f"ERROR: no setup{' ' + setup if setup else ''} with a stock box in Fusion; pass stock_wcs_mm."
+        stock_wcs_mm = s["stock_in_wcs_mm"]["min"] + s["stock_in_wcs_mm"]["max"]
+        if expected_tools is None:
+            expected_tools = sorted({o["tool"]["number"] for o in s["operations"] if o.get("tool", {}).get("number")})
+        source = f"Fusion setup '{s['name']}' in {st['document']}"
+    try:
+        r = gc.check(paths, stock_wcs_mm, limits_wcs_mm, expected_tools, clearance_mm, resolution_mm)
+    except (FileNotFoundError, ValueError) as e:
+        return f"ERROR: {e}"
+    r["stock_source"] = source
+    r["expected_tools"] = expected_tools
+    return json.dumps(r, indent=1)
 
 
 def main():

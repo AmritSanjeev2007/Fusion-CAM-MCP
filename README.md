@@ -25,6 +25,7 @@ All tool inputs and outputs are in **mm** (mm², mm³), seconds and mm/min. The 
 | `cam_add_operation(strategy, tool_id, geometry, params, tool_number)` | Operation with a JSON tool. `geometry` takes `{"holes": {"diameter_mm": d}}` or `{"contour": "outline", "side": "outside"}`. `params` are Fusion parameters by name; lengths need units, e.g. `"1 mm"` |
 | `cam_generate(targets, timeout_s=600, job)` | Starts generation and polls with short calls. Returns validity and `checkToolpath` per operation |
 | `cam_machining_time(target, rapid_mm_min=5000, tool_change_s=15)` | Cycle time (s), feed/rapid distance (mm), tool changes, per operation |
+| `gcode_check(paths, stock_wcs_mm=None, setup, limits_wcs_mm, expected_tools)` | Runs **outside Fusion**: height-map stock simulation plus rule checks by line. The stock and tool list come from the setup if not given |
 | `cam_post(post="fanuc.cps", output_dir, filename, split="auto")` | G-code via an NC program. On Personal Use it posts one program per tool. Returns the `.nc` paths, line counts and file heads |
 
 Tools that modify documents (`import_step`, `close_scratch` and every `cam_*` op that creates or posts) refuse while a Fusion command dialog is open. The CAM tools only modify scratch documents from `import_step` unless you pass `allow_user_document=true`. A call that times out may still be running in Fusion, so call `status`/`inspect`/`cam_status` before retrying.
@@ -67,8 +68,9 @@ cam_add_operation("drill", "e4b5958e-d3b7-4249-a084-d9cca4830757",              
 cam_generate()          # all valid, checkToolpath true, 2.6 s
 cam_machining_time()    # 151.2 s, 3 tool changes
 cam_post("fanuc.cps")   # Personal Use: 4 programs, one per tool, in test_output\nc
+gcode_check(paths=[...the 4 files...])   # ok; removed 9524 mm3, remaining 37380 vs CAD 37395 mm3
 ```
-Results from 2026-11-20 and the API facts found along the way are in [docs/phase3-results.md](docs/phase3-results.md). The sample tools carry generic feeds and speeds; set `tool_spindleSpeed`/`tool_feedCutting` before machining anything real.
+Results from 2026-11-20 and the API facts found along the way are in [docs/phase3-results.md](docs/phase3-results.md). The G-code check is in [docs/phase4-results.md](docs/phase4-results.md); its CLI is `python external/gcode_check.py --stock -41,-26,-11,41,26,0 file1.nc file2.nc`. The sample tools carry generic feeds and speeds; set `tool_spindleSpeed`/`tool_feedCutting` before machining anything real.
 
 Tests:
 ```powershell
